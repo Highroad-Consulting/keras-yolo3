@@ -16,33 +16,18 @@ from PIL import Image, ImageFont, ImageDraw
 from yolo3.model import yolo_eval, yolo_body, tiny_yolo_body
 from yolo3.utils import letterbox_image
 import os
-from keras.utils import multi_gpu_model
+
 
 class YOLO(object):
-    _defaults = {
-        "model_path": 'model_data/yolo.h5',
-        "anchors_path": 'model_data/yolo_anchors.txt',
-        "classes_path": 'model_data/coco_classes.txt',
-        "score" : 0.3,
-        "iou" : 0.45,
-        "model_image_size" : (416, 416),
-        "gpu_num" : 1,
-    }
-
-    @classmethod
-    def get_defaults(cls, n):
-        if n in cls._defaults:
-            return cls._defaults[n]
-        else:
-            return "Unrecognized attribute name '" + n + "'"
-
-    def __init__(self, **kwargs):
-        self.__dict__.update(self._defaults) # set up default values
-        self.__dict__.update(kwargs) # and update with user overrides
+    def __init__(self):
+        self.model_path = 'model_data/yolo.h5' # model path or trained weights path
+        self.anchors_path = 'model_data/yolo_anchors.txt'
+        self.classes_path = 'model_data/coco_classes.txt'
+        self.score = 0.3
+        self.iou = 0.45
         self.class_names = self._get_class()
         self.anchors = self._get_anchors()
         self.sess = K.get_session()
-        self.boxes, self.scores, self.classes = self.generate()
 
     def _get_class(self):
         classes_path = os.path.expanduser(self.classes_path)
@@ -92,8 +77,6 @@ class YOLO(object):
 
         # Generate output tensor targets for filtered bounding boxes.
         self.input_image_shape = K.placeholder(shape=(2, ))
-        if self.gpu_num>=2:
-            self.yolo_model = multi_gpu_model(self.yolo_model, gpus=self.gpu_num)
         boxes, scores, classes = yolo_eval(self.yolo_model.output, self.anchors,
                 len(self.class_names), self.input_image_shape,
                 score_threshold=self.score, iou_threshold=self.iou)

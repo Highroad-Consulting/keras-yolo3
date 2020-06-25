@@ -106,3 +106,15 @@ ENV/
 
 # mypy
 .mypy_cache/
+
+# PyCharm
+.idea/
+
+# datasets
+VOCdevkit
+
+# annotations
+2007_test.txt
+2007_train.txt
+2007_val.txt
+train.txt

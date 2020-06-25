@@ -68,9 +68,12 @@ def make_last_layers(x, num_filters, out_filters):
 
 
 def yolo_body(inputs, num_anchors, num_classes):
-    """Create YOLO_V3 model CNN body in Keras."""
+    """
+    Create YOLO_V3 model CNN body in Keras.
+    Fine-Grained Feature
+    """
     darknet = Model(inputs, darknet_body(inputs))
-    x, y1 = make_last_layers(darknet.output, 512, num_anchors*(num_classes+5))
+    x, y1 = make_last_layers(darknet.output, 512, num_anchors*(num_classes+5)) # Here should be num_anchors*5 + num_classes?
 
     x = compose(
             DarknetConv2D_BN_Leaky(256, (1,1)),
@@ -139,11 +142,13 @@ def yolo_head(feats, anchors, num_classes, input_shape, calc_loss=False):
     # Adjust preditions to each spatial grid point and anchor size.
     box_xy = (K.sigmoid(feats[..., :2]) + grid) / K.cast(grid_shape[::-1], K.dtype(feats))
     box_wh = K.exp(feats[..., 2:4]) * anchors_tensor / K.cast(input_shape[::-1], K.dtype(feats))
-    box_confidence = K.sigmoid(feats[..., 4:5])
-    box_class_probs = K.sigmoid(feats[..., 5:])
 
     if calc_loss == True:
         return grid, feats, box_xy, box_wh
+
+    box_confidence = K.sigmoid(feats[..., 4:5])
+    box_class_probs = K.sigmoid(feats[..., 5:])
+
     return box_xy, box_wh, box_confidence, box_class_probs
 
 
@@ -267,7 +272,7 @@ def preprocess_true_boxes(true_boxes, input_shape, anchors, num_classes):
     anchor_mins = -anchor_maxes
     valid_mask = boxes_wh[..., 0]>0
 
-    for b in range(m):
+    for b in range(m):  # loop of true boxes
         # Discard zero rows.
         wh = boxes_wh[b, valid_mask[b]]
         if len(wh)==0: continue
@@ -287,16 +292,16 @@ def preprocess_true_boxes(true_boxes, input_shape, anchors, num_classes):
         # Find best anchor for each true box
         best_anchor = np.argmax(iou, axis=-1)
 
-        for t, n in enumerate(best_anchor):
-            for l in range(num_layers):
-                if n in anchor_mask[l]:
+        for t, n in enumerate(best_anchor):  # loop of best anchors
+            for l in range(num_layers):  # loop of 3 output layers
+                if n in anchor_mask[l]:  # put y_true from true_box info
                     i = np.floor(true_boxes[b,t,0]*grid_shapes[l][1]).astype('int32')
                     j = np.floor(true_boxes[b,t,1]*grid_shapes[l][0]).astype('int32')
                     k = anchor_mask[l].index(n)
                     c = true_boxes[b,t, 4].astype('int32')
-                    y_true[l][b, j, i, k, 0:4] = true_boxes[b,t, 0:4]
-                    y_true[l][b, j, i, k, 4] = 1
-                    y_true[l][b, j, i, k, 5+c] = 1
+                    y_true[l][b, j, i, k, 0:4] = true_boxes[b,t, 0:4]  # put x, y, w, h
+                    y_true[l][b, j, i, k, 4] = 1  # put 1 if an object eixsts.
+                    y_true[l][b, j, i, k, 5+c] = 1  # put 1 if an class matches
 
     return y_true
 
@@ -358,7 +363,7 @@ def yolo_loss(args, anchors, num_classes, ignore_thresh=.5, print_loss=False):
     loss: tensor, shape=(1,)
 
     '''
-    num_layers = len(anchors)//3 # default setting
+    num_layers = len(anchors)//3 # default setting, basically 3 for yolo or 2 for tiny yolo.
     yolo_outputs = args[:num_layers]
     y_true = args[num_layers:]
     anchor_mask = [[6,7,8], [3,4,5], [0,1,2]] if num_layers==3 else [[3,4,5], [1,2,3]]
@@ -368,12 +373,12 @@ def yolo_loss(args, anchors, num_classes, ignore_thresh=.5, print_loss=False):
     m = K.shape(yolo_outputs[0])[0] # batch size, tensor
     mf = K.cast(m, K.dtype(yolo_outputs[0]))
 
-    for l in range(num_layers):
+    for l in range(num_layers):  # predicts x, y, w, h, box confidence, and class confidence in EACH LAYERS
         object_mask = y_true[l][..., 4:5]
         true_class_probs = y_true[l][..., 5:]
 
         grid, raw_pred, pred_xy, pred_wh = yolo_head(yolo_outputs[l],
-             anchors[anchor_mask[l]], num_classes, input_shape, calc_loss=True)
+             anchors[anchor_mask[l]], num_classes, input_shape, calc_loss=True)  # use 3 boundary boxes from bigger ones.
         pred_box = K.concatenate([pred_xy, pred_wh])
 
         # Darknet raw box to calculate loss.
@@ -398,6 +403,7 @@ def yolo_loss(args, anchors, num_classes, ignore_thresh=.5, print_loss=False):
         # K.binary_crossentropy is helpful to avoid exp overflow.
         xy_loss = object_mask * box_loss_scale * K.binary_crossentropy(raw_true_xy, raw_pred[...,0:2], from_logits=True)
         wh_loss = object_mask * box_loss_scale * 0.5 * K.square(raw_true_wh-raw_pred[...,2:4])
+        # Remarks: confidence_loss, the former term: object exists, the later term : object doesn't exist
         confidence_loss = object_mask * K.binary_crossentropy(object_mask, raw_pred[...,4:5], from_logits=True)+ \
             (1-object_mask) * K.binary_crossentropy(object_mask, raw_pred[...,4:5], from_logits=True) * ignore_mask
         class_loss = object_mask * K.binary_crossentropy(true_class_probs, raw_pred[...,5:], from_logits=True)
